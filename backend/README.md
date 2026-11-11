@@ -1,8 +1,10 @@
 # Daily Expense Tracker API
 
-A backend-only Django REST API for tracking everyday spending: log expenses, group them into categories with monthly budgets, and see daily or monthly summaries.
+The Django REST API for tracking everyday spending: log expenses, group them into categories with monthly budgets, and see daily or monthly summaries. The web app that uses it lives in [`../frontend`](../frontend); see the [root README](../README.md) for running both.
 
 ## Setup (Windows / PowerShell)
+
+Run these from this `backend/` folder.
 
 ```powershell
 python -m venv venv
