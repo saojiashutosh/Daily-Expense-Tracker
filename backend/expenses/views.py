@@ -1,6 +1,9 @@
+import csv
 from datetime import date
 
 from django.db.models import Count, Q, Sum
+from django.db.models.functions import TruncMonth
+from django.http import HttpResponse
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
@@ -70,12 +73,24 @@ def _parse_month(value):
     return start, end
 
 
+ORDERING_FIELDS = {'date', '-date', 'amount', '-amount'}
+
+CSV_HEADER = ['Date', 'Title', 'Amount', 'Category', 'Payment method', 'Notes']
+
+
+def _csv_safe(value):
+    """Stop spreadsheet apps from running user text as a formula (CSV injection)."""
+    value = str(value)
+    return "'" + value if value[:1] in ('=', '+', '-', '@', '\t', '\r') else value
+
+
 class ExpenseViewSet(viewsets.ModelViewSet):
     """
     CRUD for expenses. Optional query params on list:
       ?start_date=YYYY-MM-DD  ?end_date=YYYY-MM-DD  ?month=YYYY-MM
       ?category=<id>  ?payment_method=cash|card|upi|net_banking|other
       ?search=<text>  (matches title or notes)
+      ?ordering=date|-date|amount|-amount  (default: newest first)
     """
 
     serializer_class = ExpenseSerializer
@@ -97,6 +112,10 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             qs = qs.filter(payment_method=payment_method)
         if search := params.get('search'):
             qs = qs.filter(Q(title__icontains=search) | Q(notes__icontains=search))
+        if ordering := params.get('ordering'):
+            if ordering not in ORDERING_FIELDS:
+                raise ValidationError({'ordering': f"Use one of: {', '.join(sorted(ORDERING_FIELDS))}."})
+            qs = qs.order_by(ordering, '-date', '-created_at')
         return qs
 
     def perform_create(self, serializer):
@@ -140,12 +159,78 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             .order_by('-total')
         )
 
+        by_day = list(
+            qs.values('date').annotate(total=Sum('amount')).order_by('date')
+        )
+
         return Response({
             'total': totals['total'] or 0,
             'count': totals['count'],
             'by_category': by_category,
             'by_payment_method': by_payment_method,
+            'by_day': by_day,
         })
+
+    @action(detail=False, methods=['get'])
+    def trend(self, request):
+        """
+        Monthly totals for the last N months (?months=1..24, default 6), oldest first,
+        ending with the current month. Months with no spending are included as zero.
+        """
+        raw = request.query_params.get('months', '6')
+        try:
+            months = int(raw)
+        except ValueError:
+            months = 0
+        if not 1 <= months <= 24:
+            raise ValidationError({'months': 'Use a whole number from 1 to 24.'})
+
+        today = date.today()
+        index = today.year * 12 + today.month - 1  # months since year 0
+        keys = []
+        for i in range(months - 1, -1, -1):
+            year, month0 = divmod(index - i, 12)
+            keys.append(f'{year:04d}-{month0 + 1:02d}')
+
+        first = date(int(keys[0][:4]), int(keys[0][5:]), 1)
+        rows = (
+            Expense.objects.filter(user=request.user, date__gte=first)
+            .annotate(month=TruncMonth('date'))
+            .values('month')
+            .annotate(total=Sum('amount'), count=Count('id'))
+            .order_by()
+        )
+        found = {r['month'].strftime('%Y-%m'): r for r in rows}
+
+        return Response({
+            'months': [
+                {
+                    'month': key,
+                    'total': found[key]['total'] if key in found else 0,
+                    'count': found[key]['count'] if key in found else 0,
+                }
+                for key in keys
+            ]
+        })
+
+    @action(detail=False, methods=['get'])
+    def export(self, request):
+        """Download the (filtered) expenses as CSV. Accepts the same filters as list."""
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = 'attachment; filename="expenses.csv"'
+        response.write('﻿')  # BOM so Excel reads the file as UTF-8
+        writer = csv.writer(response)
+        writer.writerow(CSV_HEADER)
+        for e in self.get_queryset():
+            writer.writerow([
+                e.date.isoformat(),
+                _csv_safe(e.title),
+                e.amount,
+                _csv_safe(e.category.name) if e.category else '',
+                e.get_payment_method_display(),
+                _csv_safe(e.notes),
+            ])
+        return response
 
     @action(detail=False, methods=['get'])
     def today(self, request):
