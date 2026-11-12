@@ -1,7 +1,15 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronLeftIcon, ChevronRightIcon, PencilIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  DownloadIcon,
+  PencilIcon,
+  PlusIcon,
+  SearchIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -10,7 +18,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -24,17 +38,29 @@ import { ApiError, api } from "@/lib/api";
 import { formatDate, formatMonth, formatMoney } from "@/lib/format";
 import { useCategories, useInvalidateExpenseData } from "@/lib/queries";
 import { useDebounce } from "@/lib/use-debounce";
-import { PAYMENT_METHODS, PAYMENT_METHOD_LABELS, type Expense } from "@/lib/types";
+import {
+  ORDERING_OPTIONS,
+  PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  type Expense,
+  type Ordering,
+} from "@/lib/types";
 
 const ALL = "all";
+const DEFAULT_ORDERING: Ordering = "-date";
+const orderingItems = Object.fromEntries(ORDERING_OPTIONS.map((o) => [o.value, o.label]));
 const PAGE_SIZE = 20; // matches PAGE_SIZE in the backend's REST_FRAMEWORK settings
 
 export default function ExpensesPage() {
   const [search, setSearch] = useState("");
   const [month, setMonth] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [category, setCategory] = useState(ALL);
   const [method, setMethod] = useState(ALL);
+  const [ordering, setOrdering] = useState<Ordering>(DEFAULT_ORDERING);
   const [page, setPage] = useState(1);
+  const [exporting, setExporting] = useState(false);
 
   const [editing, setEditing] = useState<Expense | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -44,26 +70,54 @@ export default function ExpensesPage() {
   const categories = useCategories();
   const invalidate = useInvalidateExpenseData();
 
+  // What to show (used by the summary total); ordering only changes the list/export order.
   const filters = {
     search: debouncedSearch || undefined,
     month: month || undefined,
+    start_date: startDate || undefined,
+    end_date: endDate || undefined,
     category: category === ALL ? undefined : category,
     payment_method: method === ALL ? undefined : method,
   };
+  const listFilters = {
+    ...filters,
+    ordering: ordering === DEFAULT_ORDERING ? undefined : ordering,
+  };
   const hasFilters = Object.values(filters).some(Boolean) || search !== "";
+  const hasPeriod = !!(month || startDate || endDate);
 
   const list = useQuery({
-    queryKey: ["expenses", filters, page],
-    queryFn: () => api.listExpenses({ ...filters, page }),
+    queryKey: ["expenses", listFilters, page],
+    queryFn: () => api.listExpenses({ ...listFilters, page }),
     placeholderData: keepPreviousData,
   });
 
-  // Summary defaults to the current month when no date range is sent, so only ask when a month is chosen.
+  // The summary defaults to the current month when no period is sent, so only ask when one is chosen.
   const summary = useQuery({
     queryKey: ["summary", filters],
     queryFn: () => api.summary(filters),
-    enabled: !!month,
+    enabled: hasPeriod,
   });
+
+  async function exportCsv() {
+    setExporting(true);
+    try {
+      const { blob, filename } = await api.exportExpenses(listFilters);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Exported expenses to CSV");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const removeMutation = useMutation({
     mutationFn: (id: number) => api.deleteExpense(id),
@@ -82,10 +136,7 @@ export default function ExpensesPage() {
     }),
     [categories.data],
   );
-  const methodItems = useMemo(
-    () => ({ [ALL]: "All methods", ...PAYMENT_METHOD_LABELS }),
-    [],
-  );
+  const methodItems = useMemo(() => ({ [ALL]: "All methods", ...PAYMENT_METHOD_LABELS }), []);
 
   const count = list.data?.count ?? 0;
   const totalPages = Math.max(1, Math.ceil(count / PAGE_SIZE));
@@ -105,9 +156,31 @@ export default function ExpensesPage() {
     };
   }
 
+  // A month and a custom range would just intersect, which is confusing, so picking one clears the other.
+  function pickMonth(v: string) {
+    setMonth(v);
+    if (v) {
+      setStartDate("");
+      setEndDate("");
+    }
+    setPage(1);
+  }
+  function pickStart(v: string) {
+    setStartDate(v);
+    if (v) setMonth("");
+    setPage(1);
+  }
+  function pickEnd(v: string) {
+    setEndDate(v);
+    if (v) setMonth("");
+    setPage(1);
+  }
+
   function clearFilters() {
     setSearch("");
     setMonth("");
+    setStartDate("");
+    setEndDate("");
     setCategory(ALL);
     setMethod(ALL);
     setPage(1);
@@ -120,9 +193,13 @@ export default function ExpensesPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Expenses</h1>
           <p className="text-sm text-muted-foreground">
             {list.data
-              ? `${count} expense${count === 1 ? "" : "s"}${month ? ` in ${formatMonth(month)}` : ""}${
-                  summary.data ? ` · ${formatMoney(summary.data.total)} total` : ""
-                }`
+              ? `${count} expense${count === 1 ? "" : "s"}${
+                  month
+                    ? ` in ${formatMonth(month)}`
+                    : startDate || endDate
+                      ? ` ${startDate ? `from ${formatDate(startDate)}` : ""}${startDate && endDate ? " " : ""}${endDate ? `to ${formatDate(endDate)}` : ""}`
+                      : ""
+                }${summary.data ? ` · ${formatMoney(summary.data.total)} total` : ""}`
               : " "}
           </p>
         </div>
@@ -137,61 +214,122 @@ export default function ExpensesPage() {
       </div>
 
       <Card>
-        <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_auto_auto_auto_auto]">
-          <div className="relative">
-            <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+        <CardContent className="grid gap-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_auto_auto_auto]">
+            <div className="relative">
+              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search title or notes"
+                aria-label="Search"
+                className="pl-8"
+                value={search}
+                onChange={(e) => changeFilter(setSearch)(e.target.value)}
+              />
+            </div>
             <Input
-              placeholder="Search title or notes"
-              aria-label="Search"
-              className="pl-8"
-              value={search}
-              onChange={(e) => changeFilter(setSearch)(e.target.value)}
+              type="month"
+              aria-label="Month"
+              className="lg:w-44"
+              value={month}
+              onChange={(e) => pickMonth(e.target.value)}
             />
+            <Select
+              items={categoryItems}
+              value={category}
+              onValueChange={(v) => v && changeFilter(setCategory)(v)}
+            >
+              <SelectTrigger className="w-full lg:w-44" aria-label="Category">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>All categories</SelectItem>
+                {(categories.data ?? []).map((c) => (
+                  <SelectItem key={c.id} value={String(c.id)}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              items={methodItems}
+              value={method}
+              onValueChange={(v) => v && changeFilter(setMethod)(v)}
+            >
+              <SelectTrigger className="w-full lg:w-40" aria-label="Payment method">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>All methods</SelectItem>
+                {PAYMENT_METHODS.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <Input
-            type="month"
-            aria-label="Month"
-            className="lg:w-44"
-            value={month}
-            onChange={(e) => changeFilter(setMonth)(e.target.value)}
-          />
-          <Select
-            items={categoryItems}
-            value={category}
-            onValueChange={(v) => v && changeFilter(setCategory)(v)}
-          >
-            <SelectTrigger className="w-full lg:w-44" aria-label="Category">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>All categories</SelectItem>
-              {(categories.data ?? []).map((c) => (
-                <SelectItem key={c.id} value={String(c.id)}>
-                  {c.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            items={methodItems}
-            value={method}
-            onValueChange={(v) => v && changeFilter(setMethod)(v)}
-          >
-            <SelectTrigger className="w-full lg:w-40" aria-label="Payment method">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>All methods</SelectItem>
-              {PAYMENT_METHODS.map((m) => (
-                <SelectItem key={m.value} value={m.value}>
-                  {m.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button variant="ghost" onClick={clearFilters} disabled={!hasFilters}>
-            Clear
-          </Button>
+
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="grid gap-1">
+              <label htmlFor="start-date" className="text-xs text-muted-foreground">
+                From
+              </label>
+              <Input
+                id="start-date"
+                type="date"
+                className="w-40"
+                value={startDate}
+                max={endDate || undefined}
+                onChange={(e) => pickStart(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1">
+              <label htmlFor="end-date" className="text-xs text-muted-foreground">
+                To
+              </label>
+              <Input
+                id="end-date"
+                type="date"
+                className="w-40"
+                value={endDate}
+                min={startDate || undefined}
+                onChange={(e) => pickEnd(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1">
+              <span id="sort-label" className="text-xs text-muted-foreground">
+                Sort by
+              </span>
+              <Select
+                items={orderingItems}
+                value={ordering}
+                onValueChange={(v) => v && changeFilter(setOrdering)(v as Ordering)}
+              >
+                <SelectTrigger className="w-44" aria-labelledby="sort-label">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ORDERING_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="ml-auto flex gap-2">
+              <Button variant="ghost" onClick={clearFilters} disabled={!hasFilters}>
+                Clear
+              </Button>
+              <Button
+                variant="outline"
+                onClick={exportCsv}
+                disabled={exporting || (list.data?.count ?? 0) === 0}
+              >
+                <DownloadIcon /> {exporting ? "Exporting…" : "Export CSV"}
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -211,7 +349,9 @@ export default function ExpensesPage() {
             </div>
           ) : list.data && list.data.results.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-              {hasFilters ? "No expenses match these filters." : "No expenses yet. Add your first one!"}
+              {hasFilters
+                ? "No expenses match these filters."
+                : "No expenses yet. Add your first one!"}
             </div>
           ) : (
             <Table>
@@ -235,7 +375,9 @@ export default function ExpensesPage() {
                     </TableCell>
                     <TableCell className="max-w-[16rem]">
                       <p className="truncate font-medium">{e.title}</p>
-                      {e.notes && <p className="truncate text-xs text-muted-foreground">{e.notes}</p>}
+                      {e.notes && (
+                        <p className="truncate text-xs text-muted-foreground">{e.notes}</p>
+                      )}
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
                       {e.category_name ? (
@@ -313,7 +455,11 @@ export default function ExpensesPage() {
         open={deleting !== null}
         onOpenChange={(o) => !o && setDeleting(null)}
         title="Delete expense?"
-        description={deleting ? `“${deleting.title}” (${formatMoney(deleting.amount)}) will be permanently removed.` : ""}
+        description={
+          deleting
+            ? `“${deleting.title}” (${formatMoney(deleting.amount)}) will be permanently removed.`
+            : ""
+        }
         pending={removeMutation.isPending}
         onConfirm={() => deleting && removeMutation.mutate(deleting.id)}
       />
