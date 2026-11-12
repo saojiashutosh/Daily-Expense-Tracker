@@ -55,12 +55,37 @@ export interface PaymentMethodSummary {
   count: number;
 }
 
+export interface DaySummary {
+  date: string; // YYYY-MM-DD
+  total: string;
+}
+
 export interface Summary {
   total: string | number;
   count: number;
   by_category: CategorySummary[];
   by_payment_method: PaymentMethodSummary[];
+  by_day: DaySummary[];
 }
+
+export interface MonthTrend {
+  month: string; // YYYY-MM
+  total: string | number;
+  count: number;
+}
+
+export interface TrendResponse {
+  months: MonthTrend[];
+}
+
+export type Ordering = "-date" | "date" | "-amount" | "amount";
+
+export const ORDERING_OPTIONS: { value: Ordering; label: string }[] = [
+  { value: "-date", label: "Newest first" },
+  { value: "date", label: "Oldest first" },
+  { value: "-amount", label: "Highest amount" },
+  { value: "amount", label: "Lowest amount" },
+];
 
 export interface TodayResponse {
   date: string;
