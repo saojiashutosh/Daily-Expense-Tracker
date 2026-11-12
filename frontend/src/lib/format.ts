@@ -25,6 +25,18 @@ export function formatMonth(month: string): string {
   return new Date(y, m - 1, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 }
 
+/** "2026-11" -> "Nov" */
+export function formatMonthShort(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString("en-IN", { month: "short" });
+}
+
+/** Number of days in a "YYYY-MM" month. */
+export function daysInMonth(month: string): number {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(y, m, 0).getDate();
+}
+
 // These read the clock, so only call them from effects/handlers, never during render
 // (Cache Components prerenders pages and would freeze the value).
 export function todayISO(): string {
