@@ -8,6 +8,7 @@ import type {
   RegisterResponse,
   Summary,
   TodayResponse,
+  TrendResponse,
 } from "./types";
 
 const TOKEN_KEY = "expense-tracker.token";
@@ -134,6 +135,32 @@ export interface ExpenseFilters {
   category?: string;
   payment_method?: string;
   search?: string;
+  ordering?: string;
+}
+
+/** Downloads the filtered expenses as CSV. Returns the file contents and a suggested name. */
+async function exportExpenses(filters: ExpenseFilters): Promise<{ blob: Blob; filename: string }> {
+  const token = tokenStore.get();
+  let res: Response;
+  try {
+    // "*/*" rather than "application/json": this endpoint answers with text/csv.
+    res = await fetch(`/api/expenses/export/${qs({ ...filters })}`, {
+      headers: { Accept: "*/*", ...(token ? { Authorization: `Token ${token}` } : {}) },
+    });
+  } catch {
+    throw new ApiError(0, "Can't reach the server. Is the backend running?");
+  }
+  if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    }
+    let body: unknown = null;
+    try {
+      body = await res.json();
+    } catch {}
+    throw parseError(res.status, body);
+  }
+  return { blob: await res.blob(), filename: "expenses.csv" };
 }
 
 export const api = {
@@ -175,7 +202,8 @@ export const api = {
   updateExpense: (id: number, input: ExpenseInput) =>
     request<Expense>(`/expenses/${id}/`, { method: "PUT", body: input }),
   deleteExpense: (id: number) => request<void>(`/expenses/${id}/`, { method: "DELETE" }),
-  summary: (filters: ExpenseFilters) =>
-    request<Summary>(`/expenses/summary/${qs({ ...filters })}`),
+  summary: (filters: ExpenseFilters) => request<Summary>(`/expenses/summary/${qs({ ...filters })}`),
   today: () => request<TodayResponse>("/expenses/today/"),
+  trend: (months: number) => request<TrendResponse>(`/expenses/trend/${qs({ months })}`),
+  exportExpenses,
 };
