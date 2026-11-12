@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PlusIcon } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { BarChart, type BarDatum } from "@/components/bar-chart";
 import { ExpenseDialog } from "@/components/expense-dialog";
 import { UsageBar } from "@/components/usage-bar";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +13,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
-import { currentMonth, formatMonth, formatMoney } from "@/lib/format";
+import {
+  currentMonth,
+  daysInMonth,
+  formatDate,
+  formatMonth,
+  formatMonthShort,
+  formatMoney,
+} from "@/lib/format";
 import { useCategories } from "@/lib/queries";
 import { PAYMENT_METHOD_LABELS } from "@/lib/types";
 
@@ -32,9 +40,40 @@ export default function DashboardPage() {
     enabled: month !== "",
   });
   const today = useQuery({ queryKey: ["today"], queryFn: api.today });
+  const trend = useQuery({ queryKey: ["trend", 6], queryFn: () => api.trend(6) });
   const categories = useCategories();
 
   const total = Number(summary.data?.total ?? 0);
+
+  // One bar per day of the selected month (days with no spending are zero).
+  const dailyBars = useMemo<BarDatum[]>(() => {
+    if (!month || !summary.data) return [];
+    const byDay = new Map(
+      summary.data.by_day.map((d) => [Number(d.date.slice(8)), Number(d.total)]),
+    );
+    return Array.from({ length: daysInMonth(month) }, (_, i) => {
+      const day = i + 1;
+      const value = byDay.get(day) ?? 0;
+      const iso = `${month}-${String(day).padStart(2, "0")}`;
+      return {
+        key: iso,
+        label: day === 1 || day % 5 === 0 ? String(day) : "",
+        value,
+        description: `${formatDate(iso)}: ${formatMoney(value)}`,
+      };
+    });
+  }, [month, summary.data]);
+
+  const monthlyBars = useMemo<BarDatum[]>(
+    () =>
+      (trend.data?.months ?? []).map((m) => ({
+        key: m.month,
+        label: formatMonthShort(m.month),
+        value: Number(m.total),
+        description: `${formatMonth(m.month)}: ${formatMoney(m.total)}`,
+      })),
+    [trend.data],
+  );
 
   // The summary only lists categories that have spending; add budgeted ones with nothing spent yet.
   const categoryRows = useMemo(() => {
@@ -60,7 +99,7 @@ export default function DashboardPage() {
     return rows;
   }, [summary.data, categories.data]);
 
-  const error = summary.error ?? today.error;
+  const error = summary.error ?? today.error ?? trend.error;
 
   return (
     <div className="grid gap-6">
@@ -108,6 +147,41 @@ export default function DashboardPage() {
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
+            <CardTitle>Daily spending</CardTitle>
+            <CardDescription>{month ? formatMonth(month) : " "}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {summary.isPending || !month ? (
+              <Skeleton className="h-44 w-full" />
+            ) : (
+              <BarChart data={dailyBars} ariaLabel={`Daily spending in ${formatMonth(month)}`} />
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Last 6 months</CardTitle>
+            <CardDescription>Click a month to view it.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {trend.isPending ? (
+              <Skeleton className="h-44 w-full" />
+            ) : (
+              <BarChart
+                data={monthlyBars}
+                ariaLabel="Monthly spending, last 6 months"
+                selectedKey={month}
+                onSelect={setMonth}
+              />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader>
             <CardTitle>By category</CardTitle>
             <CardDescription>Budgets show how much of each limit you&apos;ve used.</CardDescription>
           </CardHeader>
@@ -137,7 +211,15 @@ export default function DashboardPage() {
                     <UsageBar
                       label={`${row.name} spending`}
                       percent={used ?? (total > 0 ? (row.spent / total) * 100 : 0)}
-                      tone={over ? "danger" : used !== null && used >= 80 ? "warning" : used === null ? "muted" : "default"}
+                      tone={
+                        over
+                          ? "danger"
+                          : used !== null && used >= 80
+                            ? "warning"
+                            : used === null
+                              ? "muted"
+                              : "default"
+                      }
                     />
                     <p className="text-xs text-muted-foreground">
                       {row.budget === null
@@ -169,7 +251,9 @@ export default function DashboardPage() {
                     <span className="font-medium">
                       {PAYMENT_METHOD_LABELS[m.payment_method] ?? m.payment_method}
                     </span>
-                    <span className="tabular-nums text-muted-foreground">{formatMoney(m.total)}</span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {formatMoney(m.total)}
+                    </span>
                   </div>
                   <UsageBar
                     label={`${PAYMENT_METHOD_LABELS[m.payment_method] ?? m.payment_method} share`}
@@ -186,7 +270,9 @@ export default function DashboardPage() {
         <CardHeader>
           <CardTitle>Today</CardTitle>
           <CardDescription>
-            {today.data ? `${today.data.expenses.length} expense(s) · ${formatMoney(today.data.total)}` : " "}
+            {today.data
+              ? `${today.data.expenses.length} expense(s) · ${formatMoney(today.data.total)}`
+              : " "}
           </CardDescription>
         </CardHeader>
         <CardContent>
