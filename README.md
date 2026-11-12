@@ -49,8 +49,8 @@ The auth token is kept in `localStorage` and sent as `Authorization: Token <toke
 | Route | What |
 |---|---|
 | `/login`, `/register` | Sign in / create an account |
-| `/` | Dashboard: totals, category budgets (with over-budget warnings), payment-method split, today's expenses, month picker |
-| `/expenses` | Search and filter by month, category and payment method; add, edit, delete; pagination |
+| `/` | Dashboard: totals, daily spending chart, last-6-months chart (click a month to jump to it), category budgets (with over-budget warnings), payment-method split, today's expenses, month picker |
+| `/expenses` | Search and filter by month or custom date range, category and payment method; sort by date or amount; export the filtered list to CSV; add, edit, delete; pagination |
 | `/categories` | Create, edit and delete categories and their monthly budgets |
 
 ## Tests and checks
