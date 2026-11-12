@@ -41,7 +41,9 @@ All endpoints are under `/api/`. Everything except register and login requires a
 | GET/POST | `/api/expenses/` | List / create expenses |
 | GET/PUT/PATCH/DELETE | `/api/expenses/<id>/` | Manage one expense |
 | GET | `/api/expenses/today/` | Today's expenses + total |
-| GET | `/api/expenses/summary/` | Totals by category (with budget status) and payment method; defaults to the current month |
+| GET | `/api/expenses/summary/` | Totals by category (with budget status), payment method and day (`by_day`); defaults to the current month |
+| GET | `/api/expenses/trend/` | Monthly totals for the last N months (`?months=1..24`, default 6), oldest first, zero-filled |
+| GET | `/api/expenses/export/` | Download expenses as CSV; accepts the same filters as the list |
 
 ### Expense fields
 
@@ -54,6 +56,9 @@ All endpoints are under `/api/`. Everything except register and login requires a
 - `?category=3`
 - `?payment_method=upi`
 - `?search=coffee` (title or notes)
+- `?ordering=-amount` (list and export only; one of `date`, `-date`, `amount`, `-amount`; default newest first)
+
+CSV cells that start with `=`, `+`, `-` or `@` are prefixed with `'` so spreadsheet apps don't run them as formulas.
 
 ## Example
 
