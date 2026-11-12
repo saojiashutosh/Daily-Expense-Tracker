@@ -13,6 +13,7 @@ export function useInvalidateExpenseData() {
       qc.invalidateQueries({ queryKey: ["expenses"] }),
       qc.invalidateQueries({ queryKey: ["summary"] }),
       qc.invalidateQueries({ queryKey: ["today"] }),
+      qc.invalidateQueries({ queryKey: ["trend"] }),
     ]);
 }
 
