@@ -11,8 +11,14 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Category, Expense
-from .serializers import CategorySerializer, ExpenseSerializer, RegisterSerializer
+from .models import Category, Expense, RecurringExpense
+from .recurring import process_due
+from .serializers import (
+    CategorySerializer,
+    ExpenseSerializer,
+    RecurringExpenseSerializer,
+    RegisterSerializer,
+)
 
 
 # ---------- Auth ----------
@@ -241,3 +247,24 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             'total': qs.aggregate(total=Sum('amount'))['total'] or 0,
             'expenses': self.get_serializer(qs, many=True).data,
         })
+
+
+# ---------- Recurring expenses ----------
+
+class RecurringExpenseViewSet(viewsets.ModelViewSet):
+    """
+    CRUD for recurring expense rules. POST /recurring/process/ turns every due occurrence
+    into a real expense (idempotent; safe to call as often as you like).
+    """
+
+    serializer_class = RecurringExpenseSerializer
+
+    def get_queryset(self):
+        return RecurringExpense.objects.filter(user=self.request.user).select_related('category')
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    @action(detail=False, methods=['post'])
+    def process(self, request):
+        return Response({'created': process_due(request.user)})
