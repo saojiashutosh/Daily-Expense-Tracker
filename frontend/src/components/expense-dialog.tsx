@@ -14,7 +14,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { todayISO } from "@/lib/format";
@@ -28,30 +34,44 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   /** Pass an expense to edit it; omit to create a new one. */
   expense?: Expense | null;
+  /** Prefill a new expense from an existing one (the date resets to today). Ignored when editing. */
+  template?: Expense | null;
 }
 
-export function ExpenseDialog({ open, onOpenChange, expense }: Props) {
+export function ExpenseDialog({ open, onOpenChange, expense, template }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         {/* Mounted only while open, so the form resets (and "today" is fresh) each time. */}
-        <ExpenseForm expense={expense} onDone={() => onOpenChange(false)} />
+        <ExpenseForm expense={expense} template={template} onDone={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
   );
 }
 
-function ExpenseForm({ expense, onDone }: { expense?: Expense | null; onDone: () => void }) {
+function ExpenseForm({
+  expense,
+  template,
+  onDone,
+}: {
+  expense?: Expense | null;
+  template?: Expense | null;
+  onDone: () => void;
+}) {
   const editing = !!expense;
+  // Fields start from the expense being edited, or from the one being duplicated.
+  const source = expense ?? template;
   const { data: categories = [] } = useCategories();
   const invalidate = useInvalidateExpenseData();
 
-  const [title, setTitle] = useState(expense?.title ?? "");
-  const [amount, setAmount] = useState(expense?.amount ?? "");
+  const [title, setTitle] = useState(source?.title ?? "");
+  const [amount, setAmount] = useState(source?.amount ?? "");
   const [date, setDate] = useState(() => expense?.date ?? todayISO());
-  const [category, setCategory] = useState(expense?.category ? String(expense.category) : NO_CATEGORY);
-  const [method, setMethod] = useState<PaymentMethod>(expense?.payment_method ?? "cash");
-  const [notes, setNotes] = useState(expense?.notes ?? "");
+  const [category, setCategory] = useState(
+    source?.category ? String(source.category) : NO_CATEGORY,
+  );
+  const [method, setMethod] = useState<PaymentMethod>(source?.payment_method ?? "cash");
+  const [notes, setNotes] = useState(source?.notes ?? "");
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const categoryItems = useMemo(
@@ -108,7 +128,11 @@ function ExpenseForm({ expense, onDone }: { expense?: Expense | null; onDone: ()
       <DialogHeader>
         <DialogTitle>{editing ? "Edit expense" : "Add expense"}</DialogTitle>
         <DialogDescription>
-          {editing ? "Update the details of this expense." : "Log something you spent money on."}
+          {editing
+            ? "Update the details of this expense."
+            : template
+              ? `Copied from “${template.title}”. Change anything, then save.`
+              : "Log something you spent money on."}
         </DialogDescription>
       </DialogHeader>
 
@@ -191,7 +215,9 @@ function ExpenseForm({ expense, onDone }: { expense?: Expense | null; onDone: ()
               ))}
             </SelectContent>
           </Select>
-          {errors.payment_method && <p className="text-xs text-destructive">{errors.payment_method}</p>}
+          {errors.payment_method && (
+            <p className="text-xs text-destructive">{errors.payment_method}</p>
+          )}
         </div>
       </div>
 
