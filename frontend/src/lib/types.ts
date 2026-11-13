@@ -115,3 +115,41 @@ export interface CategoryInput {
   name: string;
   monthly_budget: string | null;
 }
+
+export type Frequency = "weekly" | "monthly" | "yearly";
+
+export const FREQUENCIES: { value: Frequency; label: string }[] = [
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+  { value: "yearly", label: "Yearly" },
+];
+
+export const FREQUENCY_LABELS: Record<string, string> = Object.fromEntries(
+  FREQUENCIES.map((f) => [f.value, f.label]),
+);
+
+export interface RecurringExpense {
+  id: number;
+  title: string;
+  amount: string;
+  category: number | null;
+  category_name: string | null;
+  payment_method: PaymentMethod;
+  notes: string;
+  frequency: Frequency;
+  start_date: string; // YYYY-MM-DD
+  next_due: string; // YYYY-MM-DD
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface RecurringInput {
+  title: string;
+  amount: string;
+  category: number | null;
+  payment_method: PaymentMethod;
+  notes: string;
+  frequency: Frequency;
+  start_date: string;
+  is_active: boolean;
+}
