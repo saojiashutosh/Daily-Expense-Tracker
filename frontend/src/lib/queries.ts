@@ -21,5 +21,20 @@ export function useInvalidateExpenseData() {
 export function useInvalidateCategoryData() {
   const qc = useQueryClient();
   const invalidateExpenses = useInvalidateExpenseData();
-  return () => Promise.all([qc.invalidateQueries({ queryKey: ["categories"] }), invalidateExpenses()]);
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ["categories"] }),
+      qc.invalidateQueries({ queryKey: ["recurring"] }),
+      invalidateExpenses(),
+    ]);
+}
+
+export function useRecurring() {
+  return useQuery({ queryKey: ["recurring"], queryFn: api.listRecurring });
+}
+
+/** After creating, editing, pausing or processing rules (processing moves next-due dates). */
+export function useInvalidateRecurring() {
+  const qc = useQueryClient();
+  return () => qc.invalidateQueries({ queryKey: ["recurring"] });
 }
