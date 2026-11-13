@@ -49,8 +49,9 @@ The auth token is kept in `localStorage` and sent as `Authorization: Token <toke
 | Route | What |
 |---|---|
 | `/login`, `/register` | Sign in / create an account |
-| `/` | Dashboard: totals, daily spending chart, last-6-months chart (click a month to jump to it), category budgets (with over-budget warnings), payment-method split, today's expenses, month picker |
-| `/expenses` | Search and filter by month or custom date range, category and payment method; sort by date or amount; export the filtered list to CSV; add, edit, delete; pagination |
+| `/` | Dashboard: totals with month-over-month change, daily spending chart, last-6-months chart (click a month to jump to it), category budgets (with over-budget warnings), payment-method split, today's expenses, month picker |
+| `/expenses` | Search and filter by month or custom date range, category and payment method; sort by date or amount; export the filtered list to CSV; add, edit, duplicate, delete; pagination |
+| `/recurring` | Rent, subscriptions and other bills that repeat weekly, monthly or yearly. They're added to your expenses automatically when due; pause, resume, edit or delete them |
 | `/categories` | Create, edit and delete categories and their monthly budgets |
 
 ## Tests and checks
