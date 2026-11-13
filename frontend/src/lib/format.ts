@@ -19,6 +19,16 @@ export function formatDate(iso: string): string {
   });
 }
 
+/** "2026-11-05" -> "5 Nov 26": compact form for narrow screens. */
+export function formatDateShort(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "2-digit",
+  });
+}
+
 /** "2026-11" -> "November 2026" */
 export function formatMonth(month: string): string {
   const [y, m] = month.split("-").map(Number);
