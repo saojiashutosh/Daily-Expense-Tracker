@@ -64,6 +64,20 @@ export default function DashboardPage() {
     });
   }, [month, summary.data]);
 
+  // How the selected month compares with the one before it (needs both in the 6-month trend).
+  const comparison = useMemo(() => {
+    const months = trend.data?.months ?? [];
+    const i = months.findIndex((m) => m.month === month);
+    if (i < 1 || !summary.data) return null;
+    const prev = months[i - 1];
+    return {
+      prevMonth: prev.month,
+      prevTotal: Number(prev.total),
+      // The newest month is still in progress, so comparing it with a full month would mislead.
+      inProgress: i === months.length - 1,
+    };
+  }, [trend.data, month, summary.data]);
+
   const monthlyBars = useMemo<BarDatum[]>(
     () =>
       (trend.data?.months ?? []).map((m) => ({
@@ -131,7 +145,12 @@ export default function DashboardPage() {
       )}
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Total spent" loading={summary.isPending} value={formatMoney(total)} />
+        <StatCard
+          label="Total spent"
+          loading={summary.isPending}
+          value={formatMoney(total)}
+          hint={comparison && <Comparison total={total} {...comparison} />}
+        />
         <StatCard
           label="Expenses logged"
           loading={summary.isPending}
@@ -308,7 +327,17 @@ export default function DashboardPage() {
   );
 }
 
-function StatCard({ label, value, loading }: { label: string; value: string; loading: boolean }) {
+function StatCard({
+  label,
+  value,
+  loading,
+  hint,
+}: {
+  label: string;
+  value: string;
+  loading: boolean;
+  hint?: React.ReactNode;
+}) {
   return (
     <Card>
       <CardHeader>
@@ -316,9 +345,61 @@ function StatCard({ label, value, loading }: { label: string; value: string; loa
         {loading ? (
           <Skeleton className="mt-1 h-8 w-28" />
         ) : (
-          <CardTitle className="text-2xl tabular-nums">{value}</CardTitle>
+          <>
+            <CardTitle className="text-2xl tabular-nums">{value}</CardTitle>
+            {hint}
+          </>
         )}
       </CardHeader>
     </Card>
+  );
+}
+
+function Comparison({
+  total,
+  prevMonth,
+  prevTotal,
+  inProgress,
+}: {
+  total: number;
+  prevMonth: string;
+  prevTotal: number;
+  inProgress: boolean;
+}) {
+  const prev = formatMonth(prevMonth);
+  const prevShort = formatMonthShort(prevMonth);
+
+  if (prevTotal === 0) {
+    return <p className="text-xs text-muted-foreground">No spending in {prev}</p>;
+  }
+  if (inProgress) {
+    // Partial month vs a full one: say how far along it is instead of calling it a drop.
+    const pct = Math.round((total / prevTotal) * 100);
+    return (
+      <p className="text-xs text-muted-foreground">
+        {pct}% of {prev}&apos;s {formatMoney(prevTotal)} so far
+      </p>
+    );
+  }
+
+  const change = Math.round(((total - prevTotal) / prevTotal) * 100);
+  if (change === 0) {
+    return <p className="text-xs text-muted-foreground">Same as {prevShort}</p>;
+  }
+  const up = change > 0;
+  return (
+    <p
+      className={
+        up
+          ? "text-xs font-medium text-destructive"
+          : "text-xs font-medium text-emerald-600 dark:text-emerald-400"
+      }
+    >
+      <span aria-hidden>{up ? "▲" : "▼"}</span> {Math.abs(change)}% vs {prevShort}
+      <span className="sr-only">
+        {" "}
+        ({up ? "up" : "down"} from {formatMoney(prevTotal)} in {prev})
+      </span>
+    </p>
   );
 }
