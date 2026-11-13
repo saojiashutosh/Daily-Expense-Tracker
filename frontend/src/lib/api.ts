@@ -5,6 +5,8 @@ import type {
   Expense,
   ExpenseInput,
   Paginated,
+  RecurringExpense,
+  RecurringInput,
   RegisterResponse,
   Summary,
   TodayResponse,
@@ -163,6 +165,16 @@ async function exportExpenses(filters: ExpenseFilters): Promise<{ blob: Blob; fi
   return { blob: await res.blob(), filename: "expenses.csv" };
 }
 
+/** The backend paginates lists at 20 per page; some screens want every row. */
+async function fetchAllPages<T>(path: string): Promise<T[]> {
+  const all: T[] = [];
+  for (let page = 1; ; page += 1) {
+    const data = await request<Paginated<T>>(`${path}${qs({ page })}`);
+    all.push(...data.results);
+    if (!data.next) return all;
+  }
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<AuthResponse>("/auth/login/", {
@@ -178,17 +190,7 @@ export const api = {
     }),
   logout: () => request<void>("/auth/logout/", { method: "POST" }),
 
-  // The backend paginates categories at 20 per page; the UI wants them all.
-  async listCategories(): Promise<Category[]> {
-    const all: Category[] = [];
-    let page = 1;
-    for (;;) {
-      const data = await request<Paginated<Category>>(`/categories/${qs({ page })}`);
-      all.push(...data.results);
-      if (!data.next) return all;
-      page += 1;
-    }
-  },
+  listCategories: () => fetchAllPages<Category>("/categories/"),
   createCategory: (input: CategoryInput) =>
     request<Category>("/categories/", { method: "POST", body: input }),
   updateCategory: (id: number, input: CategoryInput) =>
@@ -206,4 +208,16 @@ export const api = {
   today: () => request<TodayResponse>("/expenses/today/"),
   trend: (months: number) => request<TrendResponse>(`/expenses/trend/${qs({ months })}`),
   exportExpenses,
+
+  listRecurring: () => fetchAllPages<RecurringExpense>("/recurring/"),
+  createRecurring: (input: RecurringInput) =>
+    request<RecurringExpense>("/recurring/", { method: "POST", body: input }),
+  updateRecurring: (id: number, input: RecurringInput) =>
+    request<RecurringExpense>(`/recurring/${id}/`, { method: "PUT", body: input }),
+  /** Partial update; used for pausing/resuming without resending the whole rule. */
+  setRecurringActive: (id: number, is_active: boolean) =>
+    request<RecurringExpense>(`/recurring/${id}/`, { method: "PATCH", body: { is_active } }),
+  deleteRecurring: (id: number) => request<void>(`/recurring/${id}/`, { method: "DELETE" }),
+  /** Creates expenses for every due occurrence. Safe to call repeatedly. */
+  processRecurring: () => request<{ created: number }>("/recurring/process/", { method: "POST" }),
 };
