@@ -66,3 +66,48 @@ class Expense(models.Model):
 
     def __str__(self):
         return f'{self.title} - {self.amount}'
+
+
+class RecurringExpense(models.Model):
+    """
+    A template for spending that repeats (rent, subscriptions...). Real Expense rows are
+    created from it when they fall due; see expenses/recurring.py.
+    """
+
+    class Frequency(models.TextChoices):
+        WEEKLY = 'weekly', 'Weekly'
+        MONTHLY = 'monthly', 'Monthly'
+        YEARLY = 'yearly', 'Yearly'
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='recurring_expenses'
+    )
+    category = models.ForeignKey(
+        Category, on_delete=models.SET_NULL, null=True, blank=True, related_name='recurring_expenses'
+    )
+    title = models.CharField(max_length=100)
+    amount = models.DecimalField(
+        max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))]
+    )
+    payment_method = models.CharField(
+        max_length=20, choices=Expense.PaymentMethod.choices, default=Expense.PaymentMethod.CASH
+    )
+    notes = models.TextField(blank=True)
+    frequency = models.CharField(
+        max_length=10, choices=Frequency.choices, default=Frequency.MONTHLY
+    )
+    start_date = models.DateField(default=timezone.localdate)
+    next_due = models.DateField(help_text='The next date an expense will be created for.')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['next_due', 'title']
+
+    def save(self, *args, **kwargs):
+        if self.next_due is None:
+            self.next_due = self.start_date
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.title} ({self.get_frequency_display()})'
