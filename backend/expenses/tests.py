@@ -1,10 +1,11 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from .models import Category, Expense
+from .models import Category, Expense, RecurringExpense
+from .recurring import MAX_CATCH_UP, add_months, first_due_on_or_after, next_occurrence, process_due
 
 User = get_user_model()
 
@@ -211,3 +212,208 @@ class ExportTests(APITestCase):
     def test_requires_auth(self):
         self.client.force_authenticate(None)
         self.assertEqual(self.client.get('/api/expenses/export/').status_code, 401)
+
+
+class RecurringScheduleTests(APITestCase):
+    """The date maths and the process_due engine, independent of the HTTP layer."""
+
+    def setUp(self):
+        self.user = User.objects.create_user('alice', password='pass')
+        self.other = User.objects.create_user('eve', password='pass')
+
+    def rule(self, **kwargs):
+        defaults = dict(
+            user=self.user, title='Rent', amount=Decimal('100'),
+            frequency='monthly', start_date=date(2025, 1, 1),
+        )
+        defaults.update(kwargs)
+        return RecurringExpense.objects.create(**defaults)
+
+    def dates(self):
+        return [e.date for e in Expense.objects.filter(user=self.user).order_by('date')]
+
+    # --- pure date helpers ---
+
+    def test_add_months_clamps_day(self):
+        self.assertEqual(add_months(date(2025, 1, 31), 1), date(2025, 2, 28))
+        self.assertEqual(add_months(date(2024, 1, 31), 1), date(2024, 2, 29))
+        self.assertEqual(add_months(date(2025, 11, 15), 3), date(2026, 2, 15))
+
+    def test_month_end_rule_does_not_drift(self):
+        start = date(2025, 1, 31)
+        feb = next_occurrence(start, start, 'monthly')
+        mar = next_occurrence(start, feb, 'monthly')
+        apr = next_occurrence(start, mar, 'monthly')
+        self.assertEqual((feb, mar, apr), (date(2025, 2, 28), date(2025, 3, 31), date(2025, 4, 30)))
+
+    def test_yearly_leap_day(self):
+        start = date(2024, 2, 29)
+        y1 = next_occurrence(start, start, 'yearly')
+        y2 = next_occurrence(start, y1, 'yearly')
+        y3 = next_occurrence(start, y2, 'yearly')
+        y4 = next_occurrence(start, y3, 'yearly')
+        self.assertEqual(
+            (y1, y2, y4), (date(2025, 2, 28), date(2026, 2, 28), date(2028, 2, 29))
+        )
+
+    def test_weekly(self):
+        self.assertEqual(
+            next_occurrence(date(2025, 1, 1), date(2025, 1, 1), 'weekly'), date(2025, 1, 8)
+        )
+
+    # --- process_due ---
+
+    def test_creates_expense_when_due_and_advances(self):
+        home = Category.objects.create(user=self.user, name='Home')
+        rec = self.rule(
+            start_date=date(2025, 3, 1), category=home, payment_method='upi', notes='flat'
+        )
+        self.assertEqual(process_due(self.user, today=date(2025, 3, 1)), 1)
+
+        expense = Expense.objects.get()
+        self.assertEqual(
+            (expense.title, expense.amount, expense.date),
+            ('Rent', Decimal('100'), date(2025, 3, 1)),
+        )
+        self.assertEqual(
+            (expense.category.name, expense.payment_method, expense.notes), ('Home', 'upi', 'flat')
+        )
+        rec.refresh_from_db()
+        self.assertEqual(rec.next_due, date(2025, 4, 1))
+
+    def test_not_created_before_due_date(self):
+        self.rule(start_date=date(2025, 6, 1))
+        self.assertEqual(process_due(self.user, today=date(2025, 5, 31)), 0)
+        self.assertEqual(Expense.objects.count(), 0)
+
+    def test_is_idempotent(self):
+        self.rule(start_date=date(2025, 3, 1))
+        self.assertEqual(process_due(self.user, today=date(2025, 3, 15)), 1)
+        self.assertEqual(process_due(self.user, today=date(2025, 3, 15)), 0)
+        self.assertEqual(Expense.objects.count(), 1)
+
+    def test_catches_up_on_missed_months(self):
+        self.rule(start_date=date(2025, 1, 31))
+        self.assertEqual(process_due(self.user, today=date(2025, 4, 30)), 4)
+        self.assertEqual(
+            self.dates(),
+            [date(2025, 1, 31), date(2025, 2, 28), date(2025, 3, 31), date(2025, 4, 30)],
+        )
+
+    def test_weekly_catch_up(self):
+        self.rule(frequency='weekly', start_date=date(2025, 1, 1))
+        self.assertEqual(process_due(self.user, today=date(2025, 1, 22)), 4)  # 1, 8, 15, 22
+
+    def test_inactive_rules_are_skipped(self):
+        self.rule(is_active=False)
+        self.assertEqual(process_due(self.user, today=date(2025, 6, 1)), 0)
+
+    def test_only_processes_the_given_users_rules(self):
+        self.rule(user=self.other, title='Theirs')
+        self.rule()
+        process_due(self.user, today=date(2025, 1, 1))
+        self.assertEqual(Expense.objects.filter(user=self.other).count(), 0)
+        self.assertEqual(Expense.objects.filter(user=self.user).count(), 1)
+
+    def test_catch_up_is_capped_per_run(self):
+        self.rule(frequency='weekly', start_date=date(2000, 1, 1))
+        self.assertEqual(process_due(self.user, today=date(2025, 1, 1)), MAX_CATCH_UP)
+        self.assertGreater(process_due(self.user, today=date(2025, 1, 1)), 0)  # rest, next run
+
+    def test_first_due_on_or_after_skips_past_occurrences(self):
+        rec = self.rule(start_date=date(2025, 1, 15), next_due=date(2025, 2, 15))
+        self.assertEqual(first_due_on_or_after(rec, date(2025, 5, 1)), date(2025, 5, 15))
+        self.assertEqual(first_due_on_or_after(rec, date(2025, 2, 15)), date(2025, 2, 15))
+
+
+class RecurringApiTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user('alice', password='pass')
+        self.other = User.objects.create_user('eve', password='pass')
+        self.client.force_authenticate(self.user)
+        self.food = Category.objects.create(user=self.user, name='Food')
+
+    def create(self, **extra):
+        data = {
+            'title': 'Netflix', 'amount': '499', 'frequency': 'monthly',
+            'start_date': date.today().isoformat(), **extra,
+        }
+        return self.client.post('/api/recurring/', data)
+
+    def test_create_sets_next_due_to_start_date(self):
+        start = date.today() + timedelta(days=10)
+        res = self.create(start_date=start.isoformat(), category=self.food.id)
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertEqual(res.data['next_due'], start.isoformat())
+        self.assertEqual(res.data['category_name'], 'Food')
+        self.assertTrue(res.data['is_active'])
+
+    def test_client_cannot_set_next_due(self):
+        start = date.today() + timedelta(days=10)
+        res = self.create(start_date=start.isoformat(), next_due='2001-01-01')
+        self.assertEqual(res.data['next_due'], start.isoformat())
+
+    def test_validation(self):
+        self.assertEqual(self.create(amount='0').status_code, 400)
+        self.assertEqual(self.create(frequency='daily').status_code, 400)
+
+    def test_cannot_use_another_users_category(self):
+        theirs = Category.objects.create(user=self.other, name='Theirs')
+        self.assertEqual(self.create(category=theirs.id).status_code, 400)
+
+    def test_users_only_see_their_own(self):
+        rule = RecurringExpense.objects.create(
+            user=self.other, title='Secret', amount=1,
+            start_date=date.today(), next_due=date.today(),
+        )
+        self.assertEqual(self.client.get('/api/recurring/').data['count'], 0)
+        self.assertEqual(self.client.get(f'/api/recurring/{rule.id}/').status_code, 404)
+
+    def test_start_date_cannot_change_after_creation(self):
+        rule_id = self.create().data['id']
+        new_start = (date.today() + timedelta(days=5)).isoformat()
+        res = self.client.patch(f'/api/recurring/{rule_id}/', {'start_date': new_start})
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('start_date', res.data)
+        # Re-sending the unchanged value (as an edit form does) is fine.
+        same = self.client.patch(
+            f'/api/recurring/{rule_id}/',
+            {'start_date': date.today().isoformat(), 'title': 'Renamed'},
+        )
+        self.assertEqual(same.status_code, 200)
+        self.assertEqual(same.data['title'], 'Renamed')
+
+    def test_process_endpoint_creates_due_expenses(self):
+        start = date.today() - timedelta(days=70)
+        self.create(start_date=start.isoformat())
+        res = self.client.post('/api/recurring/process/')
+        self.assertEqual(res.status_code, 200)
+        self.assertGreaterEqual(res.data['created'], 3)
+        self.assertEqual(Expense.objects.filter(user=self.user).count(), res.data['created'])
+        self.assertEqual(self.client.post('/api/recurring/process/').data['created'], 0)
+
+    def test_process_requires_auth_and_post(self):
+        self.assertEqual(self.client.get('/api/recurring/process/').status_code, 405)
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.post('/api/recurring/process/').status_code, 401)
+
+    def test_resuming_does_not_backfill_the_paused_period(self):
+        start = date.today() - timedelta(days=100)
+        rule_id = self.create(start_date=start.isoformat(), frequency='weekly').data['id']
+        self.client.patch(f'/api/recurring/{rule_id}/', {'is_active': False})
+        res = self.client.patch(f'/api/recurring/{rule_id}/', {'is_active': True})
+        next_due = date.fromisoformat(res.data['next_due'])
+        self.assertGreaterEqual(next_due, date.today())
+        self.assertEqual((next_due - start).days % 7, 0)  # still on the weekly rhythm
+        self.assertLessEqual(next_due, date.today() + timedelta(days=6))
+        # nothing from the paused stretch is created
+        created = self.client.post('/api/recurring/process/').data['created']
+        self.assertLessEqual(created, 1)
+
+    def test_deleting_a_rule_keeps_the_expenses_it_created(self):
+        start = date.today() - timedelta(days=40)
+        rule_id = self.create(start_date=start.isoformat()).data['id']
+        created = self.client.post('/api/recurring/process/').data['created']
+        self.assertGreaterEqual(created, 2)
+        self.client.delete(f'/api/recurring/{rule_id}/')
+        self.assertEqual(Expense.objects.filter(user=self.user).count(), created)
