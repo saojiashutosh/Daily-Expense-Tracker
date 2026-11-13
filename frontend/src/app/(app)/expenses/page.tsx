@@ -4,6 +4,7 @@ import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
+  CopyIcon,
   DownloadIcon,
   PencilIcon,
   PlusIcon,
@@ -35,7 +36,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ApiError, api } from "@/lib/api";
-import { formatDate, formatMonth, formatMoney } from "@/lib/format";
+import { formatDate, formatDateShort, formatMonth, formatMoney } from "@/lib/format";
 import { useCategories, useInvalidateExpenseData } from "@/lib/queries";
 import { useDebounce } from "@/lib/use-debounce";
 import {
@@ -63,6 +64,7 @@ export default function ExpensesPage() {
   const [exporting, setExporting] = useState(false);
 
   const [editing, setEditing] = useState<Expense | null>(null);
+  const [template, setTemplate] = useState<Expense | null>(null); // "Duplicate" prefill
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState<Expense | null>(null);
 
@@ -206,6 +208,7 @@ export default function ExpensesPage() {
         <Button
           onClick={() => {
             setEditing(null);
+            setTemplate(null);
             setDialogOpen(true);
           }}
         >
@@ -362,7 +365,7 @@ export default function ExpensesPage() {
                   <TableHead className="hidden md:table-cell">Category</TableHead>
                   <TableHead className="hidden md:table-cell">Method</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
-                  <TableHead className="w-20">
+                  <TableHead className="w-28">
                     <span className="sr-only">Actions</span>
                   </TableHead>
                 </TableRow>
@@ -371,7 +374,8 @@ export default function ExpensesPage() {
                 {list.data?.results.map((e) => (
                   <TableRow key={e.id}>
                     <TableCell className="whitespace-nowrap text-muted-foreground">
-                      {formatDate(e.date)}
+                      <span className="sm:hidden">{formatDateShort(e.date)}</span>
+                      <span className="hidden sm:inline">{formatDate(e.date)}</span>
                     </TableCell>
                     <TableCell className="max-w-[16rem]">
                       <p className="truncate font-medium">{e.title}</p>
@@ -397,9 +401,23 @@ export default function ExpensesPage() {
                         <Button
                           variant="ghost"
                           size="icon-sm"
+                          aria-label={`Duplicate ${e.title}`}
+                          title="Duplicate"
+                          onClick={() => {
+                            setEditing(null);
+                            setTemplate(e);
+                            setDialogOpen(true);
+                          }}
+                        >
+                          <CopyIcon />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
                           aria-label={`Edit ${e.title}`}
                           onClick={() => {
                             setEditing(e);
+                            setTemplate(null);
                             setDialogOpen(true);
                           }}
                         >
@@ -449,7 +467,12 @@ export default function ExpensesPage() {
         </div>
       )}
 
-      <ExpenseDialog open={dialogOpen} onOpenChange={setDialogOpen} expense={editing} />
+      <ExpenseDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        expense={editing}
+        template={template}
+      />
 
       <ConfirmDialog
         open={deleting !== null}
