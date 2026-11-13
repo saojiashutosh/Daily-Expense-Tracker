@@ -1,9 +1,17 @@
 "use client";
 
-import { LayoutDashboardIcon, LogOutIcon, ReceiptIcon, TagsIcon, WalletIcon } from "lucide-react";
+import {
+  LayoutDashboardIcon,
+  LogOutIcon,
+  ReceiptIcon,
+  RepeatIcon,
+  TagsIcon,
+  WalletIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -15,12 +23,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useInvalidateExpenseData, useInvalidateRecurring } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboardIcon },
   { href: "/expenses", label: "Expenses", icon: ReceiptIcon },
+  { href: "/recurring", label: "Recurring", icon: RepeatIcon },
   { href: "/categories", label: "Categories", icon: TagsIcon },
 ] as const;
 
@@ -32,6 +43,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (ready && !isAuthenticated) router.replace("/login");
   }, [ready, isAuthenticated, router]);
+
+  // Recurring expenses that have come due are created when the app opens (no cron job needed).
+  // Once per signed-in user; the endpoint is idempotent, so a repeat call would be harmless anyway.
+  const invalidateExpenses = useInvalidateExpenseData();
+  const invalidateRecurring = useInvalidateRecurring();
+  const processedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!ready || !isAuthenticated || processedFor.current === username) return;
+    processedFor.current = username;
+    api
+      .processRecurring()
+      .then(({ created }) => {
+        if (created > 0) {
+          toast.info(`Added ${created} recurring expense${created === 1 ? "" : "s"} that came due`);
+          invalidateExpenses();
+        }
+        invalidateRecurring();
+      })
+      .catch(() => {
+        // Not critical: it'll be retried the next time the app opens.
+      });
+  }, [ready, isAuthenticated, username, invalidateExpenses, invalidateRecurring]);
 
   if (!ready || !isAuthenticated) {
     return (
