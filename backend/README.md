@@ -44,6 +44,20 @@ All endpoints are under `/api/`. Everything except register and login requires a
 | GET | `/api/expenses/summary/` | Totals by category (with budget status), payment method and day (`by_day`); defaults to the current month |
 | GET | `/api/expenses/trend/` | Monthly totals for the last N months (`?months=1..24`, default 6), oldest first, zero-filled |
 | GET | `/api/expenses/export/` | Download expenses as CSV; accepts the same filters as the list |
+| GET/POST | `/api/recurring/` | List / create recurring expense rules |
+| GET/PUT/PATCH/DELETE | `/api/recurring/<id>/` | Manage one rule (PATCH `is_active` to pause or resume) |
+| POST | `/api/recurring/process/` | Create expenses for every due occurrence → `{"created": n}`. Idempotent |
+
+### Recurring expenses
+
+A rule has the usual expense fields plus `frequency` (`weekly`, `monthly`, `yearly`), `start_date` and `is_active`. `next_due` is maintained by the server (read-only).
+
+There is no scheduler: `POST /api/recurring/process/` turns every occurrence that is due (on or before today) into a real expense and moves `next_due` forward. The web app calls it when it opens, and again after you save a rule. Calling it repeatedly is harmless.
+
+- A `start_date` in the past back-fills the missed occurrences (at most 366 per call; the rest follow on the next call).
+- Monthly/yearly dates are calculated from `start_date`, so a rule starting on the 31st runs Jan 31 → Feb 28 → Mar 31 rather than drifting to the 28th.
+- Resuming a paused rule skips what was missed while it was paused.
+- `start_date` can't be changed after creation. Deleting a rule keeps the expenses it already created.
 
 ### Expense fields
 
